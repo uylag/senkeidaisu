@@ -1,17 +1,22 @@
-#include <iostream>
+#include <bits/stdc++.h>
 #include "../include/matrix.hpp"
+using namespace std;
+
+void swap(int* a, int* b)
+{
+    int* temp = a;
+    a = b;
+    b = temp;
+}
 
 int main() {
-    std::vector<std::vector<long double>> matrix({
+    Matrix<long double> matrix({
         {1.0L, 2.0L, 3.0L},
         {0.0L, 1.0L, 2.0L},
         {3.0L, 0.0L, 0.0L}
     });
-    // SparseMatrix<long double> sparse;
-    // SparseMatrix<long double>::CompressedColumnStorage crs = sparse.build_ccs(matrix);
     
-    // std::cout << crs.get(1, 0);
-    // crs(1, 0) = 5;
-    // std::cout << crs.get(1, 0);
-    Matrix<long double> mat(matrix);
+    matrix = matrix + matrix;
+
+    std::cout << matrix(2, 0);
 }
