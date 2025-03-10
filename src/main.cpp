@@ -1,22 +1,25 @@
-#include <bits/stdc++.h>
-#include "../include/matrix.hpp"
+#include "bits/stdc++.h"
+#include <senkeidaisu.hpp>
+#include <vector>
 using namespace std;
 
-void swap(int* a, int* b)
+template <typename TN>
+void cout_vector(std::vector<TN> vector)
 {
-    int* temp = a;
-    a = b;
-    b = temp;
+    for (auto& elem: vector)
+    {
+        std::cout << elem << " ";
+    }
+    std::cout << '\n';
 }
 
-int main() {
-    Matrix<long double> matrix({
-        {1.0L, 2.0L, 3.0L},
-        {0.0L, 1.0L, 2.0L},
-        {3.0L, 0.0L, 0.0L}
+int main() 
+{
+    senkeidaisu::Matrix<long double> m1({
+        {1, 2, 3},
+        {4, 5, 6},
+        {7, 8, 9}
     });
-    
-    matrix = matrix + matrix;
 
-    std::cout << matrix(2, 0);
+    std::cout << m1.T() * m1 << '\n';
 }
