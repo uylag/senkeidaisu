@@ -208,8 +208,9 @@ namespace senkeidaisu
     {
         for (int64 i = 0; i < rows_; ++i) {
             for (int64 j = 0; j < columns_; ++j) {
-                if (c_matrix_[i][j] == TN(0)) {
-                    c_matrix_[i][j] = val;
+                // Use the correct linear index into the one-dimensional array.
+                if (c_matrix_[i * row_stride_ + j] == TN(0)) {
+                    c_matrix_[i * row_stride_ + j] = val;
                 }
             }
         }

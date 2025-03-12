@@ -2,6 +2,7 @@
 #include <sparse.hpp>
 #include <dense.hpp>
 #include <variant>
+#include <cmath>
 #include <iostream>
 #include <vector>
 #include <stdexcept>
@@ -147,13 +148,13 @@ namespace senkeidaisu
         inline static Matrix<TN> identity(int64 size);
         inline static Matrix<TN> diagonal(const std::vector<TN>& values);
 
-        inline Matrix<TN> submatrix(const std::initializer_list<int>& rows_start_end,
-                                    const std::initializer_list<int>& columns_start_end);
+        inline Matrix<TN> submatrix(const std::initializer_list<int64>& rows_start_end,
+                                    const std::initializer_list<int64>& columns_start_end);
 
-        inline void fill(const TN& value, bool remain_filled = true);
-        inline void resize(int64 rows, int64 cols);
+        inline void       fill(const TN& value, bool remain_filled = true);
+        inline void       resize(int64 rows, int64 cols);
 
-        Matrix<TN> clone() const;
+        Matrix<TN>        clone() const;
 
         static Matrix<TN> read_csv(const std::string& location)
         {
@@ -161,17 +162,473 @@ namespace senkeidaisu
             return Matrix<TN>();
         };
 
+        Matrix<TN>        swap_rows(const int64& idx1, const int64& idx2, bool inplace = true);
+
+        Matrix<TN>        ref(bool inplace = true);
+        Matrix<TN>        rref(bool inplace = true);
+
+        const TN          det() const;
+
+        Matrix<TN>        LU() const;
+        Matrix<TN>        get_L();
+        Matrix<TN>        get_U();
+
+        std::pair<Matrix<TN>, std::vector<TN>>        Householder_QR(const Matrix<TN>& A);
+        Matrix<TN>                                    QR();
+        Matrix<TN>                                    get_R();
+        Matrix<TN>                                    get_Q();
+
+        Matrix<TN>                                    get_col(const int64& idx)
+        {
+            int64 num_rows = this->rows();
+            Matrix<TN> result(num_rows, 1, 0);
+            for (int64 i = 0; i < num_rows; ++i)
+            {
+                result(i, idx) = (*this)(i, idx);
+            }
+
+            return result;
+        };
+
+        int64              sign(TN value);
+        long double        norm(int64 p = 2)
+        {
+            long double sum = 0;
+            for (int64 i = 0; i < this->rows(); ++i)
+            {
+                for (int64 j = 0; j < this->cols(); ++j)
+                {
+                    sum += std::pow(std::abs((*this)(i, j)), p);
+                }
+            }
+            return std::pow(sum, 1.0 / p);
+        }
+
+        Matrix<TN> inv();
+
     private:
         SparseMatrix<TN> sparse_;
         DenseMatrix<TN> dense_;
+        DenseMatrix<TN> QH_;
+        std::vector<TN> betas_;
+        std::vector<Matrix<TN>> vs_;
     };
 
     /////////////// IMPLEMENTATION ///////////////////
 
+    // # Math: A^{-1} = R^{-1}Q^T
+    // # Math: Q^{-1} = Q^T
+    template <typename TN>
+    Matrix<TN> Matrix<TN>::inv() {
+        if (rows() != cols()) {
+            throw std::invalid_argument("Matrix must be square to compute inverse.");
+        }
+
+        Matrix<TN> R = this->QR();
+        Matrix<TN> Q = this->get_Q();
+
+        // Check for singularity
+        int64 n = R.rows();
+        const TN tolerance = TN(1e-10);
+        for (int64 i = 0; i < n; ++i) {
+            if (std::abs(R(i, i)) < tolerance) {
+                throw std::runtime_error("Matrix is singular or nearly singular and cannot be inverted.");
+            }
+        }
+
+        Matrix<TN> Q_T = Q.T(false);
+        Matrix<TN> R_inv(n, n, TN(0));
+
+        for (int64 col = 0; col < n; ++col) {
+            Matrix<TN> e(n, 1, TN(0));
+            e(col, 0) = TN(1);
+            for (int64 i = n - 1; i >= 0; --i) {
+                TN sum = TN(0);
+                for (int64 j = i + 1; j < n; ++j) {
+                    sum += R(i, j) * R_inv(j, col);
+                }
+                R_inv(i, col) = (e(i, 0) - sum) / R(i, i);
+            }
+        }
+
+        return R_inv * Q_T;
+    }
+
+
+    template <typename TN>
+    int64 Matrix<TN>::sign(TN value)
+    {
+        return (TN(0) < value) - (value < TN(0));
+    }
+
+    // # Math: H = I - 2vv^T
+    // # Math: v = a - \alpha e_1
+    // # Math: e_1 \text{ is the first standard basis vector } (1, 0, \dots, 0)^T 
+    template <typename TN>
+    std::pair<Matrix<TN>, std::vector<TN>> Matrix<TN>::Householder_QR(const Matrix<TN>& A) {
+        int64 num_rows = A.rows();
+        int64 num_cols = A.cols();
+        int64 k = std::min(num_rows, num_cols);
+        Matrix<TN> QH(A);  // Work on a copy of A
+        std::vector<TN> betas(k, TN(0));
+        vs_.clear();  // Clear previous vectors
+        const TN epsilon = 1e-10;
+
+        auto sign_lambda = [](TN x) -> TN {
+            return (x >= TN(0)) ? TN(1) : TN(-1);
+        };
+
+        for (int64 j = 0; j < k; ++j) {
+            Matrix<TN> x = QH.submatrix({j, num_rows}, {j, j + 1});
+            TN norm_x = x.norm();
+            if (std::abs(norm_x) < epsilon) {
+                betas[j] = TN(0);
+                continue;
+            }
+            TN alpha = -sign_lambda(QH(j, j)) * norm_x;
+            Matrix<TN> v(x);
+            v(0, 0) -= alpha;
+            TN beta = (v.T(false) * v)(0, 0);
+            if (std::abs(beta) < epsilon) {
+                betas[j] = TN(0);
+                continue;
+            }
+            betas[j] = TN(2) / beta;
+            vs_.push_back(v);  // Store the Householder vector
+
+            for (int64 col = j; col < num_cols; ++col) {
+                Matrix<TN> subCol = QH.submatrix({j, num_rows}, {col, col + 1});
+                TN dot = (v.T(false) * subCol)(0, 0);
+                TN factor = dot * betas[j];
+                Matrix<TN> update = v * factor;
+                for (int64 row = j; row < num_rows; ++row) {
+                    QH(row, col) -= update(row - j, 0);
+                }
+            }
+        }
+        return {QH, betas};
+    }
+
+    // QR(): Return the upper triangular R factor.
+    template <typename TN>
+    Matrix<TN> Matrix<TN>::QR() {
+        auto qr_result = Householder_QR(*this);
+        QH_ = qr_result.first.dense_;  // Store QH
+        betas_ = qr_result.second;  // Store betas
+        int64 num_rows = this->rows();
+        int64 num_cols = this->cols();
+        Matrix<TN> R(num_rows, num_cols, TN(0));
+        for (int64 i = 0; i < num_rows; ++i) {
+            for (int64 j = i; j < num_cols; ++j) {
+                R(i, j) = QH_(i, j);
+            }
+        }
+        return R;
+    }
+
+    // get_R(): Same as QR() – returns the R factor.
+    template <typename TN>
+    Matrix<TN> Matrix<TN>::get_R() {
+        return this->QR();
+    }
+
+    // get_Q(): Reconstruct the orthogonal Q matrix from the Householder vectors.
+    template <typename TN>
+    Matrix<TN> Matrix<TN>::get_Q() 
+    {
+        int64 num_rows = this->rows();
+        int64 num_cols = this->cols();
+        int64 k = std::min(num_rows, num_cols);
+        Matrix<TN> Q = Matrix<TN>::identity(num_rows);
+        std::cout << "Identity Q dimensions: " << Q.rows() << "x" << Q.cols() << std::endl;
+
+        // Check if Householder vectors were computed
+        if (vs_.size() < static_cast<size_t>(k)) {
+            std::cerr << "Warning: vs_ vector size (" << vs_.size() 
+                    << ") is less than expected (" << k << ")." << std::endl;
+        }
+
+        for (int64 j = k - 1; j >= 0; --j) {
+            if (j >= static_cast<int64>(vs_.size())) {
+                std::cerr << "Error: vs_ vector is missing element at index " << j << std::endl;
+                continue;
+            }
+            Matrix<TN> v = vs_[j];  // Use stored Householder vector
+            // Debug: print v dimensions
+            std::cout << "vs_[" << j << "] dimensions: " << v.rows() << "x" << v.cols() << std::endl;
+            Matrix<TN> Q_sub = Q.submatrix({ j, Q.rows() }, { 0, Q.cols() });
+            std::cout << "Submatrix Q from row " << j << " to " << Q.rows() 
+                    << ", all columns, dimensions: " << Q_sub.rows() << "x" << Q_sub.cols() << std::endl;
+            Matrix<TN> vT = v.T(false);
+            std::cout << "vT dimensions: " << vT.rows() << "x" << vT.cols() << std::endl;
+            Matrix<TN> prod = vT * Q_sub;
+            std::cout << "Product (vT*Q_sub) dimensions: " << prod.rows() << "x" << prod.cols() << std::endl;
+            Matrix<TN> temp = prod * betas_[j];
+            std::cout << "After multiplying with beta (" << betas_[j] << "), temp dimensions: " 
+                    << temp.rows() << "x" << temp.cols() << std::endl;
+            Matrix<TN> update = v * temp;
+            std::cout << "Update dimensions: " << update.rows() << "x" << update.cols() << std::endl;
+            for (int64 i = j; i < num_rows; ++i) {
+                for (int64 col = 0; col < Q.cols(); ++col) {
+                    Q(i, col) -= update(i - j, col);
+                }
+            }
+        }
+        return Q;
+    }
+
+
+    template <typename TN>
+    const TN Matrix<TN>::det() const
+    {
+        if (!is_square()) {
+            throw std::invalid_argument("Determinant is defined only for square matrices.");
+        }
+        Matrix<TN> lu = this->LU();
+        TN d = TN(1);
+        int64 n = lu.rows();
+        for (int64 i = 0; i < n; ++i) {
+            d *= lu(i, i);
+        }
+        return d;
+    }
+
+    template <typename TN>
+    Matrix<TN> Matrix<TN>::get_L()
+    {
+        int64 num_rows = this->rows();
+        int64 num_cols = this->cols();
+
+        if (num_rows != num_cols)
+            throw std::invalid_argument("L can only be extracted from a square LU matrix!");
+
+        Matrix<TN> L(num_rows, num_cols, TN(0));  // Initialize with zeros
+
+        for (int64 i = 0; i < num_rows; ++i)
+        {
+            L(i, i) = TN(1);  // Diagonal elements of L are 1
+            for (int64 j = 0; j < i; ++j)
+            {
+                L(i, j) = (*this)(i, j);  // Copy lower triangular elements from LU matrix
+            }
+        }
+
+        return L;
+    }
+
+    template <typename TN>
+    Matrix<TN> Matrix<TN>::get_U()
+    {
+        int64 num_rows = this->rows();
+        int64 num_cols = this->cols();
+
+        if (num_rows != num_cols)
+            throw std::invalid_argument("U can only be extracted from a square LU matrix!");
+
+        Matrix<TN> U(num_rows, num_cols, TN(0));  // Initialize with zeros
+
+        for (int64 i = 0; i < num_rows; ++i)
+        {
+            for (int64 j = i; j < num_cols; ++j)
+            {
+                U(i, j) = (*this)(i, j);  // Copy upper triangular elements from LU matrix
+            }
+        }
+
+        return U;
+    }
+
+    // # Math: A = LU
+    // # Math: L = \begin{bmatrix} 1 & 0 & 0 & \cdots & 0 \\ l_{21} & 1 & 0 & \cdots & 0 \\ l_{31} & l_{32} & 1 & \cdots & 0 \\ \vdots & \vdots & \vdots & \ddots & \vdots \\ l_{n1} & l_{n2} & l_{n3} \cdots & 1 \end{bmatrix}
+    // # Math: u_{ij} = A_{ij} - \sum_{k=1}^{j-1}l_{ik}u_{kj} \forall i (i \le j)
+    // # Math: l_{ij} = \frac{A_{ij} - \sum_{k=1}^{j-1}l_{ik}u_{kj}}{u_{ii}} \forall i (i > j)
+    template <typename TN>
+    Matrix<TN> Matrix<TN>::LU() const {
+        int64 num_rows = this->rows();
+        int64 num_cols = this->cols();
+        if (num_rows != num_cols)
+            throw std::invalid_argument("LU Decomposition requires a square matrix");
+
+        Matrix<TN> result(*this);
+        for (int i = 0; i < num_rows; ++i) {
+            for (int j = i; j < num_cols; ++j) {
+                TN sum = 0;
+                for (int k = 0; k < i; ++k) {
+                    sum += result(i, k) * result(k, j);
+                }
+                result(i, j) -= sum;
+            }
+            for (int j = i + 1; j < num_rows; ++j) {
+                TN sum = 0;
+                for (int k = 0; k < i; ++k) {
+                    sum += result(j, k) * result(k, i);
+                }
+                if (result(i, i) == TN(0))
+                    throw std::runtime_error("Matrix is singular and cannot be decomposed");
+                result(j, i) = (result(j, i) - sum) / result(i, i);
+            }
+        }
+        return result;
+    }
+
+
+    template <typename TN>
+    Matrix<TN> Matrix<TN>::swap_rows(const int64& idx1, const int64& idx2, bool inplace)
+    {
+        int64 ind1 = idx1, ind2 = idx2;
+
+        if (idx1 < 0) ind1 += rows();
+        if (idx2 < 0) ind2 += rows();
+
+        if (ind1 < 0 || ind1 >= rows() || ind2 < 0 || ind2 >= rows())
+            throw std::out_of_range("Row indices out of bounds");
+
+        Matrix<TN>* target = this;
+        Matrix<TN> result;
+
+        if (!inplace)
+        {
+            result = *this;
+            target = &result;
+        }
+
+        for (int64 j = 0; j < target->cols(); ++j)
+            std::swap((*target)(ind1, j), (*target)(ind2, j));
+
+        return *target;
+    }
+
+    template <typename TN>
+    Matrix<TN> Matrix<TN>::rref(bool inplace)
+    {
+        // If the matrix is empty, just return itself.
+        if (this->rows() == 0) return *this;
+
+        Matrix<TN>* target = this;
+        Matrix<TN> result;
+
+        // If not modifying in place, work on a copy.
+        if (!inplace)
+        {
+            result = *this;
+            target = &result;
+        }
+
+        int64 pivot_row = 0;
+        int64 num_rows = target->rows();
+        int64 num_cols = target->cols();
+
+        // Process each column.
+        for (int64 col = 0; col < num_cols && pivot_row < num_rows; ++col)
+        {
+            // Find the pivot element in the current column.
+            int64 pivot_idx = -1;
+            TN max_val = TN(0);
+            for (int64 row = pivot_row; row < num_rows; ++row)
+            {
+                if (std::abs((*target)(row, col)) > std::abs(max_val))
+                {
+                    max_val = (*target)(row, col);
+                    pivot_idx = row;
+                }
+            }
+
+            // If no non-zero pivot found in this column, move to next column.
+            if (pivot_idx == -1 || max_val == TN(0))
+                continue;
+
+            // Swap the current pivot row with the row having the maximum pivot if needed.
+            if (pivot_idx != pivot_row)
+            {
+                target->swap_rows(pivot_row, pivot_idx, true);
+            }
+
+            // Normalize the pivot row by dividing by the pivot element.
+            TN pivot_value = (*target)(pivot_row, col);
+            for (int64 j = col; j < num_cols; ++j)
+            {
+                (*target)(pivot_row, j) /= pivot_value;
+            }
+
+            // Eliminate all other entries in the pivot column.
+            for (int64 row = 0; row < num_rows; ++row)
+            {
+                if (row != pivot_row)
+                {
+                    TN factor = (*target)(row, col);
+                    for (int64 j = col; j < num_cols; ++j)
+                    {
+                        (*target)(row, j) -= factor * (*target)(pivot_row, j);
+                    }
+                }
+            }
+
+            // Move to the next pivot row.
+            pivot_row++;
+        }
+
+        return *target;
+    }
+
+
+    template <typename TN>
+    Matrix<TN> Matrix<TN>::ref(bool inplace) 
+    {
+        if (this->rows() == 1 || this->rows() == 0) return *this;
+
+        Matrix<TN>* target = this;
+        Matrix<TN> result;
+
+        if (!inplace) 
+        {
+            result = *this;
+            target = &result;
+        }
+
+        int64 pivot_row = 0;
+        int64 num_rows = target->rows();
+        int64 num_cols = target->cols();
+
+        for (int64 col = 0; col < num_cols; ++col)
+        {
+            int64 pivot_idx = -1;
+            TN max_val = TN(0);
+
+            for (int64 row = pivot_row; row < num_rows; ++row)
+            {
+                if (std::abs((*target)(row, col)) > std::abs(max_val))
+                {
+                    max_val = (*target)(row, col);
+                    pivot_idx = row;
+                }
+            }
+
+            if (pivot_idx == -1 || max_val == TN(0)) continue;
+
+            if (pivot_idx != pivot_row)
+            {
+                target->swap_rows(pivot_row, pivot_idx, true);
+            }
+
+            for (int row = pivot_row + 1; row < num_rows; ++row)
+            {
+                TN factor = (*target)(row, col) / (*target)(pivot_row, col);
+                for (int64 j = col; j < num_cols; ++j)
+                {
+                    (*target)(row, j) -= factor * (*target)(pivot_row, j);
+                }
+            }
+
+            pivot_row++;
+        }
+        
+        return *target;
+    }
+
     // Constructors
 
     template <typename TN>
-    Matrix<TN>::Matrix() : dense_(), sparse_() {}
+    Matrix<TN>::Matrix() : dense_(), sparse_(), QH_(), betas_() {}
 
     template <typename TN>
     Matrix<TN>::Matrix(const int64 &rows, const int64 &cols, const TN &default_value)
@@ -217,11 +674,15 @@ namespace senkeidaisu
 
     template <typename TN>
     TN& Matrix<TN>::operator()(int64 i, int64 j) {
+        if (i < 0) i += rows();
+        if (j < 0) j += cols();
         return dense_(i, j);
     }
 
     template <typename TN>
     const TN& Matrix<TN>::operator()(int64 i, int64 j) const {
+        if (i < 0) i += rows();
+        if (j < 0) j += cols();
         return dense_(i, j);
     }
 
@@ -398,8 +859,7 @@ namespace senkeidaisu
     Matrix<TN> Matrix<TN>::operator*(const Matrix<TN>& other) const {
         if (dense_.cols() != other.dense_.rows())
             throw std::invalid_argument("Matrix dimensions do not match for multiplication");
-        SparseMatrix<TN> result_sparse = sparse_ * other.sparse_;
-        DenseMatrix<TN> result_dense(result_sparse);
+        DenseMatrix<TN> result_dense = dense_ * other.dense_;
         return Matrix<TN>(result_dense);
     }
 
@@ -654,8 +1114,8 @@ namespace senkeidaisu
     }
 
     template <typename TN>
-    Matrix<TN> Matrix<TN>::submatrix(const std::initializer_list<int>& rows_range,
-                                     const std::initializer_list<int>& cols_range) {
+    Matrix<TN> Matrix<TN>::submatrix(const std::initializer_list<int64>& rows_range,
+                                     const std::initializer_list<int64>& cols_range) {
         if (rows_range.size() != 2 || cols_range.size() != 2)
             throw std::invalid_argument("Submatrix ranges must have exactly 2 elements (start and end)");
         auto rs = *rows_range.begin();

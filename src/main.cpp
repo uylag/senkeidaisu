@@ -18,8 +18,10 @@ int main()
     senkeidaisu::Matrix<long double> m1({
         {1, 2, 3},
         {4, 5, 6},
-        {7, 8, 9}
+        {7, 8, 0}
     });
 
-    std::cout << m1.T() * m1 << '\n';
+    std::cout << m1.det();
+
+    return 0;
 }
