@@ -1,6 +1,7 @@
 #pragma once
 #include <declarations.hpp>
 #include <sparse.hpp>
+#include <algorithm>
 #include <vector>
 #include <initializer_list>
 #include <iostream>
@@ -94,15 +95,18 @@ namespace senkeidaisu
         DenseMatrix<TN>& operator*=(const std::vector<std::vector<TN>> c_matrix);
         DenseMatrix<TN>& operator*=(const DenseMatrix<TN>& other);
 
-        DenseMatrix<TN> operator/(const TN& scalar)
+        DenseMatrix<TN> operator/(const TN& scalar) const
         {
             if (scalar == TN(0))
                 throw std::invalid_argument("Division by zero\n");
 
             DenseMatrix<TN> result(*this);
-            for (auto& elem: result.c_matrix_)
+            for (int64 i = 0; i < rows(); ++i)
             {
-                elem /= scalar;
+                for (int64 j = 0; j < cols(); ++j)
+                {
+                    result.c_matrix_[i * row_stride_ + j] /= scalar;
+                }
             }
             return result;
         };
@@ -112,10 +116,19 @@ namespace senkeidaisu
                 throw std::invalid_argument("Division by zero");
             }
         
-            for (auto& elem : c_matrix_)  // Directly modify `this`
+            // for (auto& elem : c_matrix_)  // Directly modify `this`
+            // {
+            //     elem /= scalar;
+            // }
+
+            for (int64 i = 0; i < this->rows(); ++i)
             {
-                elem /= scalar;
+                for (int64 j = 0; j < this->cols(); ++j)
+                {
+                    c_matrix_[i * row_stride_ + j] /= scalar;
+                }
             }
+
             return *this;
         };
 
@@ -227,11 +240,19 @@ namespace senkeidaisu
 
         for (int64 i = 0; i < min_rows; ++i) {
             for (int64 j = 0; j < min_cols; ++j) {
-                new_data[i][j] = c_matrix_[i][j];
+                new_data[i][j] = c_matrix_[i * row_stride_ + j];
             }
         }
 
-        c_matrix_ = std::move(new_data);
+        // c_matrix_ = std::move(new_data);
+        for (int64 i = 0; i < rows; ++i)
+        {
+            for (int64 j = 0; j < cols; ++j)
+            {
+                c_matrix_[i * row_stride_ + j] = new_data[i][j];
+            }
+        }
+
         rows_ = rows;
         columns_ = cols;
     }

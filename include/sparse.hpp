@@ -22,7 +22,7 @@ public:
     SparseMatrix(const int64& rows, const int64& cols, 
                  const TN& default_value = TN(0));
 
-    SparseMatrix(const TN*& c_matrix, const int64& rows, 
+    SparseMatrix(const TN* c_matrix, const int64& rows, 
                  const int64& cols);
 
     SparseMatrix(const std::vector<TN>& c_matrix, const int64& rows, 
@@ -137,7 +137,7 @@ public:
     inline SparseMatrix<TN>              submatrix(const std::initializer_list<int>& rows_start_end,
                                                    const std::initializer_list<int>& columns_start_end);
 
-    inline void                         fill(const TN& value, bool remain_filled = true);
+    inline void                         fill(const TN& value);
     inline void                         resize(int64 rows, int64 cols);
 
     SparseMatrix<TN>                    clone() const { return *this; };
@@ -239,7 +239,7 @@ SparseMatrix<TN>::SparseMatrix(const int64& rows, const int64& cols, const TN& d
 }
 
 template <typename TN>
-SparseMatrix<TN>::SparseMatrix(const TN*& c_matrix, const int64& rows, const int64& cols)
+SparseMatrix<TN>::SparseMatrix(const TN* c_matrix, const int64& rows, const int64& cols)
     : rows_(rows), columns_(cols)
 {
     if (rows < 0 || cols < 0)
@@ -1204,9 +1204,9 @@ SparseMatrix<TN> SparseMatrix<TN>::submatrix(const std::initializer_list<int>& r
 }
 
 template <typename TN>
-void SparseMatrix<TN>::fill(const TN& value, bool rf) {
+void SparseMatrix<TN>::fill(const TN& value) {
     DenseMatrix<TN> d = this->to_dense();
-    d.fill(value, rf);
+    d.fill(value);
     *this = SparseMatrix<TN>(d);
 }
 

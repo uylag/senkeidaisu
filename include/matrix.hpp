@@ -106,8 +106,8 @@ namespace senkeidaisu
         Matrix<TN>& operator*=(const std::vector<TN> c_matrix);
         Matrix<TN>& operator*=(const std::vector<std::vector<TN>> c_matrix);
         Matrix<TN>& operator*=(const Matrix<TN>& other);
-        Matrix<TN>& operator*=(const DenseMatrix<TN>& other) const;
-        Matrix<TN>& operator*=(const SparseMatrix<TN>& other) const;
+        Matrix<TN>& operator*=(const DenseMatrix<TN>& other);
+        Matrix<TN>& operator*=(const SparseMatrix<TN>& other);
 
         Matrix<TN> operator/(const TN& scalar) const;
         Matrix<TN>& operator/=(const TN& scalar);
@@ -131,7 +131,7 @@ namespace senkeidaisu
         inline std::vector<std::vector<TN>> dd() const { return dense_.dd(); }
         inline std::vector<TN>              v() const { return dense_.v(); }
 
-        inline Matrix<TN> T(bool inplace = false);
+        inline Matrix<TN> T(bool inplace = false) const;
 
         inline bool is_empty() const;
         inline bool is_square() const;
@@ -151,7 +151,7 @@ namespace senkeidaisu
         inline Matrix<TN> submatrix(const std::initializer_list<int64>& rows_start_end,
                                     const std::initializer_list<int64>& columns_start_end);
 
-        inline void       fill(const TN& value, bool remain_filled = true);
+        inline void       fill(const TN& value);
         inline void       resize(int64 rows, int64 cols);
 
         Matrix<TN>        clone() const;
@@ -206,15 +206,35 @@ namespace senkeidaisu
 
         Matrix<TN> inv();
 
+        Matrix<TN> gradient_descent(const Matrix<TN>& X, const Matrix<TN>& y, TN learning_rate, int64 iterations);
+
     private:
-        SparseMatrix<TN> sparse_;
-        DenseMatrix<TN> dense_;
-        DenseMatrix<TN> QH_;
-        std::vector<TN> betas_;
-        std::vector<Matrix<TN>> vs_;
+        mutable SparseMatrix<TN> sparse_;
+        mutable DenseMatrix<TN> dense_;
+        mutable DenseMatrix<TN> QH_;
+        mutable std::vector<TN> betas_;
+        mutable std::vector<Matrix<TN>> vs_;
     };
 
     /////////////// IMPLEMENTATION ///////////////////
+
+    template <typename TN>
+    Matrix<TN> Matrix<TN>::gradient_descent(const Matrix<TN>& X, const Matrix<TN>& y, TN learning_rate, int64 iterations)
+    {
+        int64 num_rows = X.rows(); // m
+        int64 num_cols = X.cols(); // n
+
+        Matrix<TN> theta(num_cols, 1, TN(0));
+        for (int i = 0; i < iterations; ++i)
+        {
+            Matrix<TN> prediction = X * theta; // # Math: h(x) = X \times \theta
+            Matrix<TN> error = prediction - y;
+            Matrix<TN> gradient = (X.T(false) * error) * (1.0 / num_rows);
+            theta = theta - gradient * learning_rate;
+        }
+
+        return theta;
+    }
 
     // # Math: A^{-1} = R^{-1}Q^T
     // # Math: Q^{-1} = Q^T
@@ -1033,13 +1053,15 @@ namespace senkeidaisu
     }
 
     template <typename TN>
-    Matrix<TN>& Matrix<TN>::operator*=(const DenseMatrix<TN>& other) const {
+    Matrix<TN>& Matrix<TN>::operator*=(const DenseMatrix<TN>& other)
+    {
         *this = *this * other;
         return const_cast<Matrix<TN>&>(*this);
     }
 
     template <typename TN>
-    Matrix<TN>& Matrix<TN>::operator*=(const SparseMatrix<TN>& other) const {
+    Matrix<TN>& Matrix<TN>::operator*=(const SparseMatrix<TN>& other)  
+    {
         *this = *this * other;
         return const_cast<Matrix<TN>&>(*this);
     }
@@ -1050,7 +1072,7 @@ namespace senkeidaisu
     Matrix<TN> Matrix<TN>::operator/(const TN& scalar) const {
         if (scalar == TN(0))
             throw std::invalid_argument("Division by zero");
-        DenseMatrix<TN> result_dense = dense_ / scalar;
+        DenseMatrix<TN> result_dense = DenseMatrix<TN>(dense_) / scalar;
         return Matrix<TN>(result_dense);
     }
 
@@ -1066,7 +1088,7 @@ namespace senkeidaisu
     // Utility Functions
 
     template <typename TN>
-    Matrix<TN> Matrix<TN>::T(bool inplace) {
+    Matrix<TN> Matrix<TN>::T(bool inplace) const {
         DenseMatrix<TN> transposed = dense_.T();
         if (inplace) {
             dense_ = std::move(transposed);
@@ -1127,8 +1149,9 @@ namespace senkeidaisu
     }
 
     template <typename TN>
-    void Matrix<TN>::fill(const TN& value, bool remain_filled) {
-        dense_.fill(value, remain_filled);
+    void Matrix<TN>::fill(const TN& value) 
+    {
+        dense_.fill(value);
         sparse_ = SparseMatrix<TN>(dense_);
     }
 
@@ -1143,3 +1166,8 @@ namespace senkeidaisu
         return Matrix<TN>(dense_);
     }
 }
+
+template class senkeidaisu::Matrix<long double>;
+template class senkeidaisu::Matrix<double>;
+template class senkeidaisu::Matrix<float>;
+template class senkeidaisu::Matrix<int>;
